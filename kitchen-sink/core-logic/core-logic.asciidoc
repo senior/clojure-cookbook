@@ -1,0 +1,210 @@
+=== Hierarchical Graph Querying with core.logic
+[role="byline"]
+by Ryan Senior
+
+==== Problem
+
+You have a graph-like, hierarchical data structure, serialized as a flat list of nodes that you want to query. Writing this code with the standrd seq functions has proven to be too tedious and error prone.
+
+==== Solution
+
+This solution uses a RDF-like graph of Clojure data structures containing movie information:
+
+[source,clojure]
+----
+(def g
+  [[:a1 :rdf/type :cc/FilmStudio]
+   [:a1 :cc/name "Newmarket Films"]
+   [:a1 :cc/filmsCollection :a2]
+   
+   [:a2 :rdf/type :cc/FilmCollection]
+   [:a2 :cc/film :a3]
+   [:a2 :cc/film :a6]
+   
+   [:a3 :rdf/type :cc/Film]
+   [:a3 :cc/name "Memento"]
+   [:a3 :cc/cast :a4]
+   
+   [:a4 :rdf/type :cc/FilmCast]
+   [:a4 :cc/director :a5]
+   
+   [:a5 :rdf/type :cc/Person]
+   [:a5 :cc/name "Christopher Nolan"]
+
+   [:a6 :rdf/type :cc/Film]
+   [:a6 :cc/filmName "The Usual Suspects"]
+   [:a6 :cc/cast :a7]
+   
+   [:a7 :rdf/type :cc/FilmCast]
+   [:a7 :cc/director :a8]
+   
+   [:a8 :rdf/type :cc/Person]
+   [:a8 :cc/name "Bryan Singer"]])
+----   
+
+This solution is specifically looking for the names of film directors at a given film studio. To find this, ground the film studio to the specific name being queried. Then create fresh logic variables to connect points in the graph.  Connect the the studio to the desired goal of the director's names.
+
+[source,clojure]
+----
+(require '[clojure.core.logic :as cl])
+(cl/run* [director-name]
+  (cl/fresh [studio film-coll film cast director]
+    (cl/membero [studio :cc/name "Newmarket Films"] g)
+    (cl/membero [studio :rdf/type :cc/FilmStudio] g)
+    (cl/membero [studio :cc/filmsCollection film-coll] g)
+
+    (cl/membero [film-coll :rdf/type :cc/FilmCollection] g)
+    (cl/membero [film-coll :cc/film film] g)
+
+    (cl/membero [film :rdf/type :cc/Film] g)
+    (cl/membero [film :cc/cast cast] g)
+
+    (cl/membero [cast :rdf/type :cc/FilmCast] g)
+    (cl/membero [cast :cc/director director] g)
+    
+    (cl/membero [director :rdf/type :cc/Person] g)
+    (cl/membero [director :cc/name director-name] g)))
+;;-> ("Christopher Nolan" "Bryan Singer")
+----
+
+==== Discussion
+
+Breaking the solution down into pieces, the +run*+ macro's first argument is the variable used to store the result of the query.  The rest is the body of the core.logic program.  +run+ is a clue that our programming paradigm is changing from evaluation to unification. Unification does not rely on order of execution and goes deeper than variable assignment. Unification declares two structures to be syntactically identical:
+
+[source,clojure]
+----
+(run 1 [q]
+  (== 1 q))
+;;-> (1)
+
+(run 1 [q]
+  (== q 1))
+;;-> (1)
+
+(run 1 [q]
+  (== [1 2 3] [1 2 q]))
+;;-> (3)
+
+(run 1 [q]
+  (== ["foo" "bar" "baz"] [q "bar" "baz"]))
+;;-> ("foo")
+----
+
+Unification is a relation, relating the first form with the second form. This is a kind of puzzle for core.logic to solve.  In the above example, +q+ is a logic variable and core.logic is charged with binding a value to +q+ such that the left and the right side of the unification (the == relation) are syntactically identical. When there is no binding that satisfies the puzzle, no solution exists:
+
+[source,clojure]
+----
+(run 1 [q]
+  (== 1 q)
+  (== 2 q))
+;;-> ()  
+----
+
++fresh+ is one way to create more logic variables:
+
+[source,clojure]
+----
+(run 1 [q]
+  (fresh [x y z]
+    (== x 1)
+    (== y 2)
+    (== z 3)
+    (== q [x y z])))
+;;->([1 2 3])
+----
+
+Just as == is a relation between two forms, membero is a relation between an element in a list and the list itself:
+
+[source,clojure]
+----
+(run 1 [q]
+  (membero q [1]))
+;;->(1)
+
+(run 1 [q]
+  (membero 1 q))
+;;->((1 . _0))
+----
+
+The first example is asking for any member of the list [1], which happens to only be 1. The second example is the opposite, any list where 1 is a member. The dot notation indicates an improper tail with _0 in it.  This means 1 could be in a list by itself or 1 could be followed by any other sequence of numbers/strings/lists etc.  _0 is an unbound variable, since there was no further restriction on the list, other than 1 being an element.
+
+WARNING: +run*+ is a macro that asks for all possible solutions.  Asking for all of the lists that contain a 1 will not terminate.
+
+Unification can peek inside structures as well, binding vars inside a list of vectors:
+
+[source,clojure]
+----
+(run 1 [q]
+  (membero [1 q 3] [[1 2 3] [4 5 6] [7 8 9]]))
+;;->(2)
+----
+
+Logic variables can live for the duration of the program, making it possible to use the same logic variable in multiple statements:
+
+[source,clojure]
+----
+(let [seq-a [["foo" 1 2] ["bar" 3 4] ["baz" 5 6]]
+      seq-b [["foo" 9 8] ["bar" 7 6] ["baz" 5 4]]]
+  (cl/run 1 [q]
+    (cl/fresh [first-item middle-item last-a last-b]
+      (cl/membero [first-item middle-item last-a] seq-a)
+      (cl/membero [first-item middle-item last-b] seq-b)
+      (cl/== q [last-a last-b]))))
+;;->([6 4])
+----
+
+The example above does not specify first-item, only that it should be the same for seq-a and seq-b. core.logic uses the data provided to bind values to that variable that satisfy the constraints.  The same is true with middle-item.
+
+Building up from this, we can traverse the graph described in the solution.
+
+[source,clojure]
+----
+(cl/run 1 [director-name]
+  (cl/fresh [studio film-coll film cast director]
+    (cl/membero [studio :cc/name "Newmarket Films"] g)
+    (cl/membero [studio :rdf/type :cc/FilmStudio] g)
+    (cl/membero [studio :cc/filmsCollection film-coll] g)
+
+    (cl/membero [film-coll :rdf/type :cc/FilmCollection] g)
+    (cl/membero [film-coll :cc/film film] g)
+
+    (cl/membero [film :rdf/type :cc/Film] g)
+    (cl/membero [film :cc/cast cast] g)
+
+    (cl/membero [cast :rdf/type :cc/FilmCast] g)
+    (cl/membero [cast :cc/director director] g)
+    
+    (cl/membero [director :rdf/type :cc/Person] g)
+    (cl/membero [director :cc/name director-name] g)))
+;;-> ("Christopher Nolan")
+----
+
+There is one minor difference from the above code and the original solution. Rather than using +run*+, asking for all solutions, +run 1+ was used. The program above has multiple answers to the query for a director at Newmarket Films. Asking for more answers will return more with no other code change.
+
+TIP: Slight modifications to the query above can significantly change the results.  Swapping "Newmarket Films" for a new fresh variable will return all directors, for all studios. A macro could also be created to reduce some of the code duplication if desired.
+
+ One benefit of the relational solution to this problem is being able to generate a graph from the values:
+
+[source,clojure]
+----
+(first
+  (cl/run 1 [g]
+    (cl/fresh [studio film-coll film cast director]
+      (cl/membero [studio :cc/name "Newmarket Films"] g)
+      (cl/membero [studio :rdf/type :cc/FilmStudio] g)
+      (cl/membero [studio :cc/filmsCollection film-coll] g)
+
+      (cl/membero [film-coll :rdf/type :cc/FilmCollection] g)
+      (cl/membero [film-coll :cc/film film] g)
+
+      (cl/membero [film :rdf/type :cc/Film] g)
+      (cl/membero [film :cc/cast cast] g)
+
+      (cl/membero [cast :rdf/type :cc/FilmCast] g)
+      (cl/membero [cast :cc/director director] g)
+    
+      (cl/membero [director :rdf/type :cc/Person] g)
+      (cl/membero [director :cc/name "Baz"] g))))
+;;-> ([_0 :cc/name "Newmarket Films"] [_0 :rdf/type :cc/FilmStudio] [_0 :cc/filmsCollection _1] ...)
+
+TIP: For small graphs, membero is fast enough.  Larger graphs will experience performance problems as core.logic will traverse the list many times to find these elements. The abstraction in core.logic is very robust. Swapping membero for another relation that uses indexing in a homegrown graph structure is an easy way to improve performance and still get the declarative benefits of the logic-based solution.
