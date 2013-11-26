@@ -240,5 +240,13 @@ There is one minor difference from the above code and the original solution. Rat
 
 [TIP]
 ++++
-For small graphs, membero is fast enough.  Larger graphs will experience performance problems as core.logic will traverse the list many times to find these elements. The abstraction in core.logic is very robust. Swapping membero for another relation that uses indexing in a homegrown graph structure is an easy way to improve performance and still get the declarative benefits of the logic-based solution.
+For small graphs, membero is fast enough.  Larger graphs will experience performance problems as core.logic will traverse the list many times to find the elements. Using _clojure.core.logic/to-stream_ with some basic indexing can greatly improve the query performance.
 ++++
+
+==== See Also
+
+* The Reasoned Schemer - By Daniel P. Friedman, William E. Byrd and Oleg Kiselyov
+* https://github.com/clojure/core.logic/wiki[The core.logic wiki]
+* http://minikanren.org/[The miniKanren] website
+* See https://github.com/clojure/core.logic[core.logic repository] for examples of using _clojure.core.logic/to-stream_
+* https://github.com/clojure/core.match[core.match], a (non-unification) matching library with some similar ideas, described briefly in <<sec_core_match_parser>>
